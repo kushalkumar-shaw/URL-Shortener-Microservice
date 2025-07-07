@@ -1,67 +1,96 @@
+require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
+const bodyParser = require('body-parser');
 const dns = require('dns');
-const urlParser = require('url');
-
+const fs = require('fs');
 const app = express();
 
-// ✅ Middleware for FCC
-app.use(cors());
-app.use(express.urlencoded({ extended: false })); // FCC sends x-www-form-urlencoded
+const port = process.env.PORT || 3000;
 
-// Simple homepage
+app.use(cors());
+app.use(bodyParser.urlencoded({ extended: false }));
+app.use(bodyParser.json());
+app.use('/public', express.static(`${process.cwd()}/public`));
+
 app.get('/', (req, res) => {
-  res.send('URL Shortener Microservice is running');
+  res.sendFile(process.cwd() + '/views/index.html');
 });
 
-// In-memory "database"
-const urlDatabase = {};
-let currentId = 1;
+function dataManagement(action, input) {
+  const filePath = './public/data.json';
 
-// ✅ POST /api/shorturl
-app.post('/api/shorturl', (req, res) => {
-  const originalUrl = req.body.url;
-
-  // ✅ Check basic format
-  const urlRegex = /^https?:\/\/([\w.-]+\.[a-z]{2,})(:\d+)?(\/.*)?$/i;
-  if (!urlRegex.test(originalUrl)) {
-    return res.json({ error: 'invalid url' });
+  if (!fs.existsSync(filePath)) {
+    fs.closeSync(fs.openSync(filePath, 'w'));
   }
 
-  // ✅ Extract hostname and check DNS
-  const hostname = urlParser.parse(originalUrl).hostname;
+  const file = fs.readFileSync(filePath);
 
-  dns.lookup(hostname, (err) => {
-    if (err) {
-      return res.json({ error: 'invalid url' });
+  if (action === 'save data' && input) {
+    if (file.length === 0) {
+      fs.writeFileSync(filePath, JSON.stringify([input], null, 2));
+    } else {
+      const data = JSON.parse(file.toString());
+      const exists = data.some(d => d.original_url === input.original_url);
+      if (!exists) {
+        data.push(input);
+        fs.writeFileSync(filePath, JSON.stringify(data, null, 2));
+      }
     }
+  } else if (action === 'load data') {
+    if (file.length === 0) return;
+    return JSON.parse(file);
+  }
+}
 
-    // ✅ Store and respond
-    const shortUrl = currentId;
-    urlDatabase[shortUrl] = originalUrl;
-    currentId++;
+function genShortUrl() {
+  const allData = dataManagement('load data');
+  let min = 1;
+  let max = allData && allData.length > 0 ? allData.length * 1000 : 1000;
+  const short = Math.ceil(Math.random() * (max - min + 1) + min);
 
-    return res.json({
-      original_url: originalUrl,
-      short_url: shortUrl
-    });
+  if (!allData) return short;
+  const exists = allData.some(d => d.short_url === short);
+  return exists ? genShortUrl() : short;
+}
+
+app.post('/api/shorturl', (req, res) => {
+  const input = req.body.url;
+  if (!input) return res.json({ error: 'invalid url' });
+
+  const domainMatch = input.match(/^(?:https?:\/\/)?(?:[^@\/\n]+@)?(?:www\.)?([^:\/?\n]+)/igm);
+  if (!domainMatch) return res.json({ error: 'invalid url' });
+
+  const domain = domainMatch[0].replace(/^https?:\/\//i, '');
+
+  dns.lookup(domain, (err) => {
+    if (err) return res.json({ error: 'invalid url' });
+
+    const short = genShortUrl();
+    const result = { original_url: input, short_url: short };
+    dataManagement('save data', result);
+    res.json(result);
   });
 });
 
-// ✅ GET /api/shorturl/:short_url → redirect
-app.get('/api/shorturl/:short_url', (req, res) => {
-  const shortUrl = parseInt(req.params.short_url);
+app.get('/api/shorturl/:shorturl', (req, res) => {
+  const input = Number(req.params.shorturl);
+  const allData = dataManagement('load data');
 
-  const originalUrl = urlDatabase[shortUrl];
-  if (originalUrl) {
-    return res.redirect(originalUrl);
+  if (!allData) return res.json({ error: 'No data found' });
+
+  const match = allData.find(d => d.short_url === input);
+  if (match) {
+    res.redirect(match.original_url);
   } else {
-    return res.json({ error: 'No short URL found for given input' });
+    res.json({ error: 'No matching short URL' });
   }
 });
 
-// ✅ Start the server
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`🚀 Server running at http://localhost:${PORT}`);
+app.get('/api/hello', (req, res) => {
+  res.json({ greeting: 'hello API' });
+});
+
+app.listen(port, () => {
+  console.log(`Listening on port ${port}`);
 });
