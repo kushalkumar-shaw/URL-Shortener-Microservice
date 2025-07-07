@@ -5,63 +5,61 @@ const dns = require('dns');
 const urlParser = require('url');
 
 const app = express();
-
-// Middleware
 app.use(cors());
-app.use(bodyParser.urlencoded({ extended: false }));
+app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 
-// Serve simple homepage (optional)
+// Simple homepage
 app.get('/', (req, res) => {
-  res.send('URL Shortener Microservice is running');
+  res.send('URL Shortener Microservice');
 });
 
-// In-memory "database"
 let urlDatabase = {};
 let id = 1;
 
-// POST endpoint to shorten URL
+// POST route
 app.post('/api/shorturl', (req, res) => {
   const originalUrl = req.body.url;
 
-  // Validate URL format
-  const urlRegex = /^(https?:\/\/)([\w.-]+\.[a-z]{2,})(:\d+)?(\/.*)?$/i;
+  // Check format with regex
+  const urlRegex = /^(https?:\/\/)([\w.-]+\.[a-z]{2,})(:[0-9]{1,5})?(\/.*)?$/i;
   if (!urlRegex.test(originalUrl)) {
     return res.json({ error: 'invalid url' });
   }
 
   const parsedUrl = urlParser.parse(originalUrl);
 
-  // Validate domain with DNS lookup
-  dns.lookup(parsedUrl.hostname, (err, address) => {
+  // DNS lookup to verify hostname
+  dns.lookup(parsedUrl.hostname, (err) => {
     if (err) {
       return res.json({ error: 'invalid url' });
     }
 
-    const shortUrl = id++;
+    const shortUrl = id;
     urlDatabase[shortUrl] = originalUrl;
+    id++;
 
-    res.json({
+    return res.json({
       original_url: originalUrl,
       short_url: shortUrl
     });
   });
 });
 
-// GET endpoint to redirect to original URL
+// GET route to redirect
 app.get('/api/shorturl/:short_url', (req, res) => {
-  const shortUrl = req.params.short_url;
-  const originalUrl = urlDatabase[shortUrl];
+  const shortUrl = parseInt(req.params.short_url);
 
+  const originalUrl = urlDatabase[shortUrl];
   if (originalUrl) {
-    res.redirect(originalUrl);
+    return res.redirect(originalUrl);
   } else {
-    res.json({ error: 'No short URL found for given input' });
+    return res.json({ error: 'No short URL found for given input' });
   }
 });
 
-// Start the server
+// Start server
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`Server running at http://localhost:${PORT}`);
+  console.log(`Server is running on http://localhost:${PORT}`);
 });
